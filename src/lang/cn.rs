@@ -826,5 +826,18 @@ pub static ref T: std::collections::HashMap<&'static str, &'static str> =
         ("install-directory-not-empty-tip", "所选文件夹不为空。安装可能删除现有数据。建议选择其他文件夹。"),
         ("Request approval", "请求批准"),
         ("Forever", "永久"),
+        ("Shutdown remote device", "关闭远程电脑"),
+        ("Are you sure you want to shut down", "确定要关闭"),
+        ("Wake-on-LAN is needed to turn it back on", "重新开机需要靠网络唤醒（WOL）"),
+        ("Shutdown command sent", "关机指令已发送"),
+        ("Wake on LAN", "网络唤醒"),
+        ("Wake-up info", "唤醒信息"),
+        ("MAC address", "MAC 地址"),
+        ("Broadcast address", "广播地址"),
+        ("Please enter the MAC address", "请输入 MAC 地址"),
+        ("Leave empty to use the broadcast address of every network interface", "留空则使用本机每块网卡的广播地址"),
+        ("wake-on-lan-tip", "需在目标电脑的 BIOS 与网卡属性里开启网络唤醒，并关闭 Windows 快速启动"),
+        ("Wake a device on the remote network", "唤醒对方网络中的设备"),
+        ("Magic packet sent", "魔术包已发送"),
     ].iter().cloned().collect();
 }

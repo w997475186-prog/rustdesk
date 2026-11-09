@@ -829,6 +829,19 @@ message MessageQuery {
   int32 switch_display = 1;
 }
 
+// Ask a peer to send a Wake-on-LAN magic packet inside its own LAN.
+// The peer acts as a relay: a powered-off machine cannot be reached from the
+// internet, and a magic packet needs an L2 broadcast on the network the target
+// lives in, so the controller asks an online peer of that network to send it.
+message WolRequest {
+  // Target MAC address, "AA:BB:CC:DD:EE:FF".
+  string mac = 1;
+  // Broadcast address of the target network, empty means 255.255.255.255.
+  string broadcast_ip = 2;
+  // UDP port of the magic packet, 9 (default) or 7.
+  uint32 port = 3;
+}
+
 message Misc {
   oneof union {
     ChatMessage chat_message = 4;
@@ -872,6 +885,13 @@ message Misc {
     // is rebuilt, and held again, the next time it is shown, before any connection names it
     // by id again, so the shape just selected is always there to give.
     uint64 request_cursor_data = 39;
+    // Shut the peer down, the counterpart of `restart_remote_device` (14).
+    // Guarded by the same permission (`Permission.restart`). Peers older than
+    // the build carrying this field ignore it, so a controller must not expect
+    // the connection to drop.
+    bool shutdown_remote_device = 40;
+    // Wake a machine of the peer's LAN up. Guarded by `Permission.restart` too.
+    WolRequest wol_request = 41;
   }
 }
 

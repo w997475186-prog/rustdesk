@@ -597,6 +597,15 @@ abstract class BasePeerCard extends StatelessWidget {
     // menuItems.add(await _openNewConnInOptAction(peer.id));
     if (!isWeb) {
       menuItems.add(await _forceAlwaysRelayAction(peer.id));
+      // Waking up only makes sense for a device with a wired NIC and a BIOS,
+      // i.e. the desktop platforms.
+      if (peer.platform == kPeerPlatformWindows ||
+          peer.platform == kPeerPlatformLinux ||
+          peer.platform == kPeerPlatformMacOS) {
+        menuItems.add(MenuEntryDivider<String>());
+        menuItems.add(_wolAction(peer.id));
+        menuItems.add(_wolTargetAction(peer.id));
+      }
     }
     return menuItems;
   }
@@ -774,16 +783,32 @@ abstract class BasePeerCard extends StatelessWidget {
     );
   }
 
+  /// Wake the peer up. Uses the MAC saved by the user, or the one seen during
+  /// LAN discovery; asks for a MAC when neither is known, so the entry works for
+  /// a machine that has been offline for a long time too.
   @protected
   MenuEntryBase<String> _wolAction(String id) {
     return MenuEntryButton<String>(
       childBuilder: (TextStyle? style) => Text(
-        translate('WOL'),
+        translate('Wake on LAN'),
         style: style,
       ),
-      proc: () {
-        bind.mainWol(id: id);
-      },
+      proc: () => wakePeerOnLan(id, gFFI.dialogManager),
+      padding: menuPadding,
+      dismissOnClicked: true,
+    );
+  }
+
+  /// Add or edit the MAC used to wake this peer up.
+  @protected
+  MenuEntryBase<String> _wolTargetAction(String id) {
+    return MenuEntryButton<String>(
+      childBuilder: (TextStyle? style) => Text(
+        translate('Wake-up info'),
+        style: style,
+      ),
+      proc: () =>
+          showWolTargetDialog(id: id, dialogManager: gFFI.dialogManager),
       padding: menuPadding,
       dismissOnClicked: true,
     );
@@ -1163,7 +1188,6 @@ class DiscoveredPeerCard extends BasePeerCard {
 
     final menuItems = await _buildConnectionMenuItems(context);
     menuItems.add(MenuEntryDivider());
-    menuItems.add(_wolAction(peer.id));
     if (isWindows) {
       menuItems.add(_createShortCutAction(peer.id));
     }

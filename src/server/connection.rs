@@ -3968,6 +3968,38 @@ impl Connection {
                             }
                         }
                     }
+                    Some(misc::Union::ShutdownRemoteDevice(_)) => {
+                        #[cfg(not(any(target_os = "android", target_os = "ios")))]
+                        if self.restart {
+                            // force_shutdown, same reasoning as force_reboot above:
+                            // the plain variant lets apps block the shutdown.
+                            #[cfg(any(target_os = "linux", target_os = "windows"))]
+                            match system_shutdown::force_shutdown() {
+                                Ok(_) => log::info!("Shutdown by the peer"),
+                                Err(e) => log::error!("Failed to shut down: {}", e),
+                            }
+                            #[cfg(target_os = "macos")]
+                            match system_shutdown::shutdown() {
+                                Ok(_) => log::info!("Shutdown by the peer"),
+                                Err(e) => log::error!("Failed to shut down: {}", e),
+                            }
+                        }
+                    }
+                    // A powered-off machine cannot be reached from the internet and
+                    // a magic packet needs an L2 broadcast, so the peer broadcasts it
+                    // inside its own LAN on behalf of the controller.
+                    // On mobile the body is compiled out, leaving `r` unused.
+                    #[allow(unused_variables)]
+                    Some(misc::Union::WolRequest(r)) => {
+                        #[cfg(not(any(target_os = "android", target_os = "ios")))]
+                        if self.restart {
+                            let port = r.port as u16;
+                            match crate::lan::send_wol_to_mac(&r.mac, &r.broadcast_ip, port) {
+                                Ok(_) => log::info!("Wake-on-LAN request from the peer done"),
+                                Err(e) => log::error!("Failed to send Wake-on-LAN packet: {}", e),
+                            }
+                        }
+                    }
                     #[cfg(windows)]
                     Some(misc::Union::ElevationRequest(r)) => match r.union {
                         Some(elevation_request::Union::Direct(_)) => {

@@ -3924,6 +3924,30 @@ impl LoginConfigHandler {
         msg_out
     }
 
+    /// Counterpart of `restart_remote_device()`. Guarded by the same permission
+    /// on the peer side, so no new permission is introduced.
+    pub fn shutdown_remote_device(&self) -> Message {
+        let mut misc = Misc::new();
+        misc.set_shutdown_remote_device(true);
+        let mut msg_out = Message::new();
+        msg_out.set_misc(misc);
+        msg_out
+    }
+
+    /// Ask the peer to broadcast a magic packet inside its own LAN, used to wake
+    /// a machine that is powered off and therefore unreachable from here.
+    pub fn wol_request(&self, mac: &str, broadcast_ip: &str, port: u16) -> Message {
+        let mut request = WolRequest::new();
+        request.set_mac(mac.to_owned());
+        request.set_broadcast_ip(broadcast_ip.to_owned());
+        request.set_port(port as u32);
+        let mut misc = Misc::new();
+        misc.set_wol_request(request);
+        let mut msg_out = Message::new();
+        msg_out.set_misc(misc);
+        msg_out
+    }
+
     pub fn mark_restarting_remote_device(&mut self) {
         self.restarting_remote_device = true;
         self.restart_remote_device_at = Some(Instant::now());

@@ -2096,6 +2096,19 @@ pub fn session_restart_remote_device(session_id: SessionID) {
     }
 }
 
+pub fn session_shutdown_remote_device(session_id: SessionID) {
+    if let Some(session) = sessions::get_session_by_session_id(&session_id) {
+        session.shutdown_remote_device();
+    }
+}
+
+/// Ask the peer of this session to wake a machine up inside its own LAN.
+pub fn session_wol_request(session_id: SessionID, mac: String, broadcast_ip: String, port: i32) {
+    if let Some(session) = sessions::get_session_by_session_id(&session_id) {
+        session.wol_request(mac, broadcast_ip, port_to_u16(port));
+    }
+}
+
 pub fn session_get_audit_server_sync(session_id: SessionID, typ: String) -> SyncReturn<String> {
     let res = if let Some(session) = sessions::get_session_by_session_id(&session_id) {
         session.get_audit_server(typ)
@@ -2250,6 +2263,67 @@ pub fn main_wol(id: String) {
     // TODO: move send_wol outside.
     #[cfg(not(any(target_os = "ios")))]
     crate::lan::send_wol(id)
+}
+
+/// Wake a machine up by its MAC address, without needing to have discovered it
+/// on the LAN first. Returns an empty string on success, the reason otherwise,
+/// so the UI can tell "MAC is wrong" from "packet could not be sent".
+pub fn main_wol_by_mac(mac: String, broadcast_ip: String, port: i32) -> SyncReturn<String> {
+    SyncReturn(wol_by_mac(mac, broadcast_ip, port_to_u16(port)))
+}
+
+fn wol_by_mac(mac: String, broadcast_ip: String, port: u16) -> String {
+    #[cfg(target_os = "ios")]
+    {
+        let _ = (mac, broadcast_ip, port);
+        "Wake-on-LAN is not supported on iOS".to_owned()
+    }
+    #[cfg(not(target_os = "ios"))]
+    {
+        match crate::lan::send_wol_to_mac(&mac, &broadcast_ip, port) {
+            Ok(_) => "".to_owned(),
+            Err(err) => err.to_string(),
+        }
+    }
+}
+
+/// The UI passes the port as int; anything out of range falls back to the
+/// default 9 instead of being rejected, an odd port is not worth an error.
+fn port_to_u16(port: i32) -> u16 {
+    if port <= 0 || port > u16::MAX as i32 {
+        crate::lan::DEFAULT_WOL_PORT
+    } else {
+        port as u16
+    }
+}
+
+/// Saved wake-up info of `id` as JSON ("" when there is none), falling back to
+/// the MAC seen during LAN discovery so the discovery page behaves as before.
+pub fn main_get_wol_target(id: String) -> SyncReturn<String> {
+    SyncReturn(match crate::lan::get_wol_target(&id) {
+        Some(target) => hbb_common::serde_json::to_string(&target).unwrap_or_default(),
+        None => "".to_owned(),
+    })
+}
+
+/// Save or overwrite the wake-up info of `id`. Returns "" on success, the reason
+/// otherwise, so an invalid MAC is rejected before anything is stored.
+pub fn main_set_wol_target(
+    id: String,
+    mac: String,
+    broadcast_ip: String,
+    port: i32,
+) -> SyncReturn<String> {
+    SyncReturn(
+        match crate::lan::set_wol_target(&id, &mac, &broadcast_ip, port_to_u16(port)) {
+            Ok(_) => "".to_owned(),
+            Err(err) => err.to_string(),
+        },
+    )
+}
+
+pub fn main_remove_wol_target(id: String) {
+    crate::lan::remove_wol_target(&id);
 }
 
 pub fn main_create_shortcut(_id: String) {

@@ -1443,6 +1443,290 @@ void showRestartRemoteDevice(PeerInfo pi, String id, SessionID sessionId,
   if (res == true) bind.sessionRestartRemoteDevice(sessionId: sessionId);
 }
 
+/// Saved wake-up info of a peer, decoded from the JSON the Rust side returns.
+class WolTarget {
+  final String mac;
+  final String broadcastIp;
+  final int port;
+
+  WolTarget({required this.mac, required this.broadcastIp, required this.port});
+
+  static WolTarget? of(String id) {
+    if (isWeb || id.isEmpty) return null;
+    final json = bind.mainGetWolTarget(id: id);
+    if (json.isEmpty) return null;
+    try {
+      final map = jsonDecode(json);
+      return WolTarget(
+        mac: map['mac'] ?? '',
+        broadcastIp: map['broadcast_ip'] ?? '',
+        port: (map['port'] ?? 0) as int,
+      );
+    } catch (e) {
+      debugPrint('Invalid wake-up info of $id: $e');
+      return null;
+    }
+  }
+}
+
+/// Send a magic packet right now. Failures are toasted instead of thrown: a
+/// wrong MAC or a firewalled broadcast is a normal thing to hit here.
+bool sendMagicPacket(String mac,
+    {String broadcastIp = '', int port = 0, bool silent = false}) {
+  if (isWeb) return false;
+  final err =
+      bind.mainWolByMac(mac: mac, broadcastIp: broadcastIp, port: port);
+  if (err.isEmpty) {
+    if (!silent) showToast(translate('Magic packet sent'));
+    return true;
+  }
+  showToast(err);
+  return false;
+}
+
+/// Wake a peer up. Without saved wake-up info this asks for the MAC first,
+/// because a machine that is off cannot be discovered anymore.
+Future<void> wakePeerOnLan(
+    String id, OverlayDialogManager dialogManager) async {
+  final target = WolTarget.of(id);
+  if (target == null || target.mac.isEmpty) {
+    await showWolTargetDialog(id: id, dialogManager: dialogManager, wakeAfterSave: true);
+    return;
+  }
+  sendMagicPacket(target.mac,
+      broadcastIp: target.broadcastIp, port: target.port);
+}
+
+/// Add or edit the wake-up info of a peer: MAC, broadcast address and port.
+Future<void> showWolTargetDialog({
+  required String id,
+  required OverlayDialogManager dialogManager,
+  bool wakeAfterSave = false,
+}) async {
+  final existing = WolTarget.of(id);
+  final initialPort = (existing?.port ?? 0) == 0 ? 9 : existing!.port;
+  final macController = TextEditingController(text: existing?.mac ?? '');
+  final broadcastController =
+      TextEditingController(text: existing?.broadcastIp ?? '');
+  final portController = TextEditingController(text: '$initialPort');
+  var errorText = '';
+
+  dialogManager.show((setState, close, context) {
+    submit() {
+      final mac = macController.text.trim();
+      if (mac.isEmpty) {
+        setState(() => errorText = translate('Please enter the MAC address'));
+        return;
+      }
+      final port = int.tryParse(portController.text.trim()) ?? 0;
+      final err = bind.mainSetWolTarget(
+          id: id,
+          mac: mac,
+          broadcastIp: broadcastController.text.trim(),
+          port: port);
+      if (err.isNotEmpty) {
+        setState(() => errorText = err);
+        return;
+      }
+      close();
+      final saved = WolTarget.of(id);
+      if (wakeAfterSave && saved != null) {
+        sendMagicPacket(saved.mac,
+            broadcastIp: saved.broadcastIp, port: saved.port);
+      } else {
+        showToast(translate('Successful'));
+      }
+    }
+
+    remove() {
+      bind.mainRemoveWolTarget(id: id);
+      close();
+    }
+
+    return CustomAlertDialog(
+      title: Row(children: [
+        Icon(Icons.power_settings_new_rounded, color: MyTheme.accent, size: 24),
+        Flexible(
+            child: Text(translate('Wake-up info')).paddingOnly(left: 10)),
+      ]),
+      content: ConstrainedBox(
+        constraints: const BoxConstraints(minWidth: 400),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            DialogTextField(
+              title: translate('MAC address'),
+              hintText: 'AA:BB:CC:DD:EE:FF',
+              controller: macController,
+              errorText: errorText.isEmpty ? null : errorText,
+            ),
+            DialogTextField(
+              title: translate('Broadcast address'),
+              hintText: '255.255.255.255',
+              controller: broadcastController,
+              helperText: translate(
+                  'Leave empty to use the broadcast address of every network interface'),
+            ),
+            DialogTextField(
+              title: translate('Port'),
+              hintText: '9',
+              keyboardType: TextInputType.number,
+              controller: portController,
+            ),
+            Text(
+              translate('wake-on-lan-tip'),
+              style: Theme.of(context)
+                  .textTheme
+                  .bodySmall
+                  ?.copyWith(fontSize: 12),
+            ).paddingOnly(top: 8),
+          ],
+        ),
+      ),
+      actions: [
+        if (existing != null)
+          dialogButton(
+            'Remove',
+            icon: Icon(Icons.delete_outline_rounded),
+            onPressed: remove,
+            isOutline: true,
+          ),
+        dialogButton(
+          "Cancel",
+          icon: Icon(Icons.close_rounded),
+          onPressed: close,
+          isOutline: true,
+        ),
+        dialogButton(
+          "OK",
+          icon: Icon(Icons.done_rounded),
+          onPressed: submit,
+        ),
+      ],
+      onSubmit: submit,
+      onCancel: close,
+    );
+  });
+}
+
+void showShutdownRemoteDevice(PeerInfo pi, String id, SessionID sessionId,
+    OverlayDialogManager dialogManager) async {
+  final res = await dialogManager
+      .show<bool>((setState, close, context) => CustomAlertDialog(
+            title: Row(children: [
+              Icon(Icons.warning_rounded, color: Colors.redAccent, size: 28),
+              Flexible(
+                  child: Text(translate("Shutdown remote device"))
+                      .paddingOnly(left: 10)),
+            ]),
+            content: Text(
+                "${translate('Are you sure you want to shut down')} \n${pi.username}@${pi.hostname}($id) ?\n\n${translate('Wake-on-LAN is needed to turn it back on')}"),
+            actions: [
+              dialogButton(
+                "Cancel",
+                icon: Icon(Icons.close_rounded),
+                onPressed: close,
+                isOutline: true,
+              ),
+              dialogButton(
+                "OK",
+                icon: Icon(Icons.done_rounded),
+                onPressed: () => close(true),
+              ),
+            ],
+            onCancel: close,
+            onSubmit: () => close(true),
+          ));
+  if (res == true) {
+    bind.sessionShutdownRemoteDevice(sessionId: sessionId);
+    // The peer stays off, so there is no reconnect to wait for. Say so instead
+    // of letting the connection drop look like an error.
+    showToast(translate('Shutdown command sent'));
+  }
+}
+
+/// Ask the peer of this session to send a magic packet inside its own LAN, the
+/// only way to wake a machine that is off but not in this controller's network.
+void showWolRequestDialog(PeerInfo pi, String id, SessionID sessionId,
+    OverlayDialogManager dialogManager) {
+  final macController = TextEditingController();
+  final broadcastController = TextEditingController();
+  final portController = TextEditingController(text: '9');
+  var errorText = '';
+
+  dialogManager.show((setState, close, context) {
+    submit() {
+      final mac = macController.text.trim();
+      if (mac.isEmpty) {
+        setState(() => errorText = translate('Please enter the MAC address'));
+        return;
+      }
+      bind.sessionWolRequest(
+          sessionId: sessionId,
+          mac: mac,
+          broadcastIp: broadcastController.text.trim(),
+          port: int.tryParse(portController.text.trim()) ?? 0);
+      close();
+      showToast(translate('Magic packet sent'));
+    }
+
+    return CustomAlertDialog(
+      title: Row(children: [
+        Icon(Icons.power_settings_new_rounded, color: MyTheme.accent, size: 24),
+        Flexible(
+            child: Text(translate('Wake a device on the remote network'))
+                .paddingOnly(left: 10)),
+      ]),
+      content: ConstrainedBox(
+        constraints: const BoxConstraints(minWidth: 400),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text("${pi.username}@${pi.hostname}($id)")
+                .paddingOnly(bottom: 8),
+            DialogTextField(
+              title: translate('MAC address'),
+              hintText: 'AA:BB:CC:DD:EE:FF',
+              controller: macController,
+              errorText: errorText.isEmpty ? null : errorText,
+            ),
+            DialogTextField(
+              title: translate('Broadcast address'),
+              hintText: '255.255.255.255',
+              controller: broadcastController,
+              helperText: translate(
+                  'Leave empty to use the broadcast address of every network interface'),
+            ),
+            DialogTextField(
+              title: translate('Port'),
+              hintText: '9',
+              keyboardType: TextInputType.number,
+              controller: portController,
+            ),
+          ],
+        ),
+      ),
+      actions: [
+        dialogButton(
+          "Cancel",
+          icon: Icon(Icons.close_rounded),
+          onPressed: close,
+          isOutline: true,
+        ),
+        dialogButton(
+          "OK",
+          icon: Icon(Icons.done_rounded),
+          onPressed: submit,
+        ),
+      ],
+      onSubmit: submit,
+      onCancel: close,
+    );
+  });
+}
+
 showSetOSPassword(
   SessionID sessionId,
   bool login,

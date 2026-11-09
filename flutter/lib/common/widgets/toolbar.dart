@@ -663,6 +663,24 @@ List<TTextMenu> toolbarControls(BuildContext context, String id, FFI ffi) {
               showRestartRemoteDevice(pi, id, sessionId, ffi.dialogManager),
           actionId: kShortcutActionRestartRemote),
     );
+    // shutdown
+    v.add(
+      TTextMenu(
+          child: Text(translate('Shutdown remote device')),
+          onPressed: () =>
+              showShutdownRemoteDevice(pi, id, sessionId, ffi.dialogManager)),
+    );
+    // Wake a machine of the peer's network up. A powered-off machine cannot be
+    // reached from here, so the peer sends the magic packet instead. The Web
+    // client has no socket to broadcast from, hence no entry there.
+    if (!isWeb) {
+      v.add(
+        TTextMenu(
+            child: Text(translate('Wake a device on the remote network')),
+            onPressed: () =>
+                showWolRequestDialog(pi, id, sessionId, ffi.dialogManager)),
+      );
+    }
   }
   // insertLock
   if (isDefaultConn && !ffiModel.viewOnly && ffi.ffiModel.keyboard) {

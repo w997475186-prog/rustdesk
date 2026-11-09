@@ -826,5 +826,18 @@ pub static ref T: std::collections::HashMap<&'static str, &'static str> =
         ("install-directory-not-empty-tip", ""),
         ("Request approval", ""),
         ("Forever", ""),
+        ("Shutdown remote device", ""),
+        ("Are you sure you want to shut down", ""),
+        ("Wake-on-LAN is needed to turn it back on", ""),
+        ("Shutdown command sent", ""),
+        ("Wake on LAN", ""),
+        ("Wake-up info", ""),
+        ("MAC address", ""),
+        ("Broadcast address", ""),
+        ("Please enter the MAC address", ""),
+        ("Leave empty to use the broadcast address of every network interface", ""),
+        ("wake-on-lan-tip", ""),
+        ("Wake a device on the remote network", ""),
+        ("Magic packet sent", ""),
     ].iter().cloned().collect();
 }

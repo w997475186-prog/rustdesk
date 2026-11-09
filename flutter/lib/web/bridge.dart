@@ -1380,6 +1380,22 @@ class RustdeskImpl {
     return Future(() => js.context.callMethod('setByName', ['restart']));
   }
 
+  Future<void> sessionShutdownRemoteDevice(
+      {required UuidValue sessionId, dynamic hint}) {
+    return Future(() => js.context.callMethod('setByName', ['shutdown']));
+  }
+
+  // The Web client cannot broadcast, so a peer cannot be asked to wake anything
+  // up through it. Kept for signature parity, callers guard with `isWeb`.
+  Future<void> sessionWolRequest(
+      {required UuidValue sessionId,
+      required String mac,
+      required String broadcastIp,
+      required int port,
+      dynamic hint}) {
+    throw UnimplementedError("sessionWolRequest");
+  }
+
   String sessionGetAuditServerSync(
       {required UuidValue sessionId, required String typ, dynamic hint}) {
     return js.context.callMethod('getByName', ['audit_server', typ]);
@@ -1458,6 +1474,33 @@ class RustdeskImpl {
 
   Future<void> mainWol({required String id, dynamic hint}) {
     throw UnimplementedError("mainWol");
+  }
+
+  // Wake-on-LAN is a local Rust side feature, the Web client has no socket to
+  // broadcast from. Callers guard with `isWeb`, this only keeps the signature.
+  String mainWolByMac(
+      {required String mac,
+      required String broadcastIp,
+      required int port,
+      dynamic hint}) {
+    throw UnimplementedError("mainWolByMac");
+  }
+
+  String mainGetWolTarget({required String id, dynamic hint}) {
+    throw UnimplementedError("mainGetWolTarget");
+  }
+
+  String mainSetWolTarget(
+      {required String id,
+      required String mac,
+      required String broadcastIp,
+      required int port,
+      dynamic hint}) {
+    throw UnimplementedError("mainSetWolTarget");
+  }
+
+  Future<void> mainRemoveWolTarget({required String id, dynamic hint}) {
+    throw UnimplementedError("mainRemoveWolTarget");
   }
 
   Future<void> mainCreateShortcut({required String id, dynamic hint}) {

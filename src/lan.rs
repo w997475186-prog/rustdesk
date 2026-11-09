@@ -15,9 +15,12 @@ use hbb_common::{
     ResultType,
 };
 
+use serde::{Deserialize, Serialize};
+
 use std::{
     collections::{HashMap, HashSet},
     net::{IpAddr, Ipv4Addr, SocketAddr, ToSocketAddrs, UdpSocket},
+    path::PathBuf,
     time::Instant,
 };
 
@@ -85,6 +88,7 @@ pub async fn discover() -> ResultType<()> {
 
 pub fn send_wol(id: String) {
     let interfaces = default_net::get_interfaces();
+    let mut sent = false;
     for peer in &config::LanPeers::load().peers {
         if peer.id == id {
             for (_, mac) in peer.ip_mac.iter() {
@@ -95,12 +99,241 @@ pub fn send_wol(id: String) {
                             // if (u32::from(ipv4.addr) & u32::from(ipv4.netmask)) == (u32::from(peer_ip) & u32::from(ipv4.netmask))
                             log::info!("Send wol to {mac_addr} of {}", ipv4.addr);
                             allow_err!(wol::send_wol(mac_addr, None, Some(IpAddr::V4(ipv4.addr))));
+                            sent = true;
                         }
                     }
                 }
             }
             break;
         }
+    }
+    // A discovered peer is gone from `LanPeers` once it is powered off, so the
+    // discovery page is the only place that used to offer WOL. Fall back to the
+    // wake-up info the user saved by hand for this id.
+    if !sent {
+        if let Some(target) = get_stored_wol_target(&id) {
+            log::info!("Send wol to {} by saved wake-up info", target.mac);
+            allow_err!(send_wol_to_mac(
+                &target.mac,
+                &target.broadcast_ip,
+                target.port
+            ));
+        }
+    }
+}
+
+/// UDP port of the magic packet. 9 is the discard port every NIC listens on, 7
+/// is the echo port a few older NICs use instead.
+pub const DEFAULT_WOL_PORT: u16 = 9;
+
+/// A wake-up target saved by the user, persisted apart from `LanPeers` on
+/// purpose: `LanPeers` is a discovery cache that drops a machine once it is
+/// offline, while this has to survive exactly that.
+#[derive(Debug, Default, Clone, Serialize, Deserialize)]
+pub struct WolTarget {
+    /// RustDesk ID of the machine to wake, may be empty when the user only
+    /// knows the MAC address.
+    #[serde(default)]
+    pub id: String,
+    /// "AA:BB:CC:DD:EE:FF".
+    #[serde(default)]
+    pub mac: String,
+    /// Empty means "every broadcast address of this machine", see
+    /// `interface_broadcast_addrs()`.
+    #[serde(default)]
+    pub broadcast_ip: String,
+    #[serde(default)]
+    pub port: u16,
+}
+
+fn wol_targets_path() -> PathBuf {
+    config::Config::path("wol_targets.json")
+}
+
+fn load_wol_targets() -> Vec<WolTarget> {
+    let path = wol_targets_path();
+    match std::fs::read_to_string(&path) {
+        Ok(s) => match serde_json::from_str(&s) {
+            Ok(targets) => targets,
+            Err(err) => {
+                log::error!("Failed to parse {}: {}", path.display(), err);
+                Vec::new()
+            }
+        },
+        Err(_) => Vec::new(),
+    }
+}
+
+fn store_wol_targets(targets: &[WolTarget]) {
+    let path = wol_targets_path();
+    if let Some(dir) = path.parent() {
+        if let Err(err) = std::fs::create_dir_all(dir) {
+            log::error!("Failed to create {}: {}", dir.display(), err);
+            return;
+        }
+    }
+    match serde_json::to_string_pretty(targets) {
+        Ok(s) => {
+            if let Err(err) = std::fs::write(&path, s) {
+                log::error!("Failed to write {}: {}", path.display(), err);
+            }
+        }
+        Err(err) => log::error!("Failed to serialize wake-up info: {}", err),
+    }
+}
+
+/// Normalize user input to "AA:BB:CC:DD:EE:FF" so that a MAC accepted once is
+/// accepted everywhere, and reject garbage before it reaches the socket.
+pub fn normalize_mac(mac: &str) -> ResultType<String> {
+    let hex: String = mac.chars().filter(|c| c.is_ascii_hexdigit()).collect();
+    if hex.len() != 12 {
+        bail!("Invalid MAC address: {}", mac);
+    }
+    let mut parts = Vec::with_capacity(6);
+    for i in (0..12).step_by(2) {
+        parts.push(hex[i..i + 2].to_uppercase());
+    }
+    Ok(parts.join(":"))
+}
+
+fn mac_bytes(mac: &str) -> ResultType<Vec<u8>> {
+    let mac = normalize_mac(mac)?;
+    let mut bytes = Vec::with_capacity(6);
+    for part in mac.split(':') {
+        match u8::from_str_radix(part, 16) {
+            Ok(b) => bytes.push(b),
+            Err(err) => bail!("Invalid MAC address {}: {}", mac, err),
+        }
+    }
+    Ok(bytes)
+}
+
+/// Broadcast address of every local IPv4 interface, paired with that interface's
+/// own address. Binding the source address is what makes the packet leave through
+/// the right NIC on a machine with several of them (VPN, Hyper-V, WSL, ...), a
+/// socket bound to 0.0.0.0 would let the routing table decide instead.
+fn interface_broadcast_addrs() -> Vec<(Ipv4Addr, Ipv4Addr)> {
+    let mut addrs: Vec<(Ipv4Addr, Ipv4Addr)> = Vec::new();
+    for interface in default_net::get_interfaces() {
+        for ipv4 in &interface.ipv4 {
+            let addr = u32::from(ipv4.addr);
+            let netmask = u32::from(ipv4.netmask);
+            if ipv4.addr.is_loopback() || ipv4.addr.is_unspecified() || netmask == 0 {
+                continue;
+            }
+            let broadcast = Ipv4Addr::from(addr | !netmask);
+            if !addrs.iter().any(|(_, dest)| *dest == broadcast) {
+                addrs.push((ipv4.addr, broadcast));
+            }
+        }
+    }
+    addrs
+}
+
+/// Send a magic packet to an explicit MAC address, broadcast address and port.
+/// Unlike `send_wol()` this needs no discovery data, which is what makes waking
+/// an arbitrary, long-offline machine possible.
+pub fn send_wol_to_mac(mac: &str, broadcast_ip: &str, port: u16) -> ResultType<()> {
+    let bytes = mac_bytes(mac)?;
+    let mut packet = Vec::with_capacity(102);
+    packet.extend_from_slice(&[0xff; 6]);
+    for _ in 0..16 {
+        packet.extend_from_slice(&bytes);
+    }
+    let port = if port == 0 { DEFAULT_WOL_PORT } else { port };
+    let broadcast_ip = broadcast_ip.trim();
+    // (source, destination) pairs.
+    let mut dests: Vec<(Ipv4Addr, Ipv4Addr)> = Vec::new();
+    if broadcast_ip.is_empty() {
+        dests.extend(interface_broadcast_addrs());
+    } else {
+        match broadcast_ip.parse::<Ipv4Addr>() {
+            Ok(ip) => dests.push((Ipv4Addr::UNSPECIFIED, ip)),
+            Err(err) => bail!("Invalid broadcast address {}: {}", broadcast_ip, err),
+        }
+    }
+    if dests.is_empty() {
+        // A directed broadcast survives switches, 255.255.255.255 is dropped by
+        // some of them, but it is still better than sending nothing.
+        dests.push((Ipv4Addr::UNSPECIFIED, Ipv4Addr::BROADCAST));
+    }
+    let mut sent = 0;
+    for (src, dest) in &dests {
+        let socket = match UdpSocket::bind(SocketAddr::from((*src, 0))) {
+            Ok(s) => s,
+            Err(err) => {
+                log::error!("Failed to bind {:?} to send wol: {}", src, err);
+                continue;
+            }
+        };
+        if let Err(err) = socket.set_broadcast(true) {
+            log::error!("Failed to enable broadcast to send wol: {}", err);
+            continue;
+        }
+        match socket.send_to(&packet, SocketAddr::from((*dest, port))) {
+            Ok(_) => {
+                log::info!("Send wol to {} through {}:{}", mac, dest, port);
+                sent += 1;
+            }
+            Err(err) => log::error!("Failed to send wol packet to {}:{}: {}", dest, port, err),
+        }
+    }
+    if sent == 0 {
+        bail!("Failed to send the magic packet");
+    }
+    Ok(())
+}
+
+/// Saved wake-up info for `id`, without consulting the discovery cache.
+pub fn get_stored_wol_target(id: &str) -> Option<WolTarget> {
+    if id.is_empty() {
+        return None;
+    }
+    load_wol_targets().into_iter().find(|x| x.id == id)
+}
+
+/// Saved wake-up info for `id`. When the user has not saved anything, the MAC
+/// seen during LAN discovery is used, so the discovery page keeps working
+/// before and after this change.
+pub fn get_wol_target(id: &str) -> Option<WolTarget> {
+    if let Some(target) = get_stored_wol_target(id) {
+        return Some(target);
+    }
+    for peer in &config::LanPeers::load().peers {
+        if peer.id == id {
+            if let Some(mac) = peer.ip_mac.values().find(|x| !x.is_empty()) {
+                return Some(WolTarget {
+                    id: id.to_owned(),
+                    mac: normalize_mac(mac).unwrap_or_else(|_| mac.clone()),
+                    broadcast_ip: "".to_owned(),
+                    port: DEFAULT_WOL_PORT,
+                });
+            }
+        }
+    }
+    None
+}
+
+pub fn set_wol_target(id: &str, mac: &str, broadcast_ip: &str, port: u16) -> ResultType<WolTarget> {
+    let target = WolTarget {
+        id: id.to_owned(),
+        mac: normalize_mac(mac)?,
+        broadcast_ip: broadcast_ip.trim().to_owned(),
+        port: if port == 0 { DEFAULT_WOL_PORT } else { port },
+    };
+    let mut targets = load_wol_targets();
+    targets.retain(|x| x.id != target.id);
+    targets.push(target.clone());
+    store_wol_targets(&targets);
+    Ok(target)
+}
+
+pub fn remove_wol_target(id: &str) {
+    let mut targets = load_wol_targets();
+    let len = targets.len();
+    targets.retain(|x| x.id != id);
+    if targets.len() != len {
+        store_wol_targets(&targets);
     }
 }
 

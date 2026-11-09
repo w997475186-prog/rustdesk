@@ -578,6 +578,23 @@ impl<T: InvokeUiSession> Session<T> {
         self.send(Data::Message(msg));
     }
 
+    /// Shut the peer down. Deliberately does not mark the restarting state: the
+    /// machine stays off, so there is nothing to wait for and no auto reconnect
+    /// to keep alive; the user wakes it up again with Wake-on-LAN.
+    pub fn shutdown_remote_device(&self) {
+        let lc = self.lc.read().unwrap();
+        let msg = lc.shutdown_remote_device();
+        self.send(Data::Message(msg));
+    }
+
+    /// Ask the peer to wake a machine of its LAN up. Only the peer side can do
+    /// it: the magic packet has to be broadcast where that machine lives.
+    pub fn wol_request(&self, mac: String, broadcast_ip: String, port: u16) {
+        let lc = self.lc.read().unwrap();
+        let msg = lc.wol_request(&mac, &broadcast_ip, port);
+        self.send(Data::Message(msg));
+    }
+
     pub fn get_audit_server(&self, typ: String) -> String {
         if LocalConfig::get_option("access_token").is_empty() {
             return "".to_owned();
