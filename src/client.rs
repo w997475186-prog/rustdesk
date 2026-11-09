@@ -3937,10 +3937,14 @@ impl LoginConfigHandler {
     /// Ask the peer to broadcast a magic packet inside its own LAN, used to wake
     /// a machine that is powered off and therefore unreachable from here.
     pub fn wol_request(&self, mac: &str, broadcast_ip: &str, port: u16) -> Message {
-        let mut request = WolRequest::new();
-        request.set_mac(mac.to_owned());
-        request.set_broadcast_ip(broadcast_ip.to_owned());
-        request.set_port(port as u32);
+        // Proto3 plain scalars are public fields, rust-protobuf only generates
+        // `set_*` for oneof members and message fields, hence the struct literal.
+        let request = WolRequest {
+            mac: mac.to_owned(),
+            broadcast_ip: broadcast_ip.to_owned(),
+            port: port as u32,
+            ..Default::default()
+        };
         let mut misc = Misc::new();
         misc.set_wol_request(request);
         let mut msg_out = Message::new();
