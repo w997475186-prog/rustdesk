@@ -236,6 +236,10 @@ class _PeerCardState extends State<_PeerCard>
                     ],
                   ).marginOnly(top: 2),
                 ),
+                // Offline peer in tile / list / portrait layout: same one-tap
+                // wake action as on the grid card, just compact so it fits the
+                // row next to the "more" button.
+                if (!peer.online) _wakeIconButton(peer),
                 isPortrait
                     ? checkBoxOrActionMorePortrait(peer)
                     : checkBoxOrActionMoreLandscape(peer, isTile: true),
@@ -416,6 +420,34 @@ class _PeerCardState extends State<_PeerCard>
         // the card below.
         if (!peer.online) _wakeButton(peer),
       ]),
+    );
+  }
+
+  /// Compact round power button used by the tile / list / portrait layouts.
+  /// Tap wakes the machine, long press edits the MAC used for waking.
+  Widget _wakeIconButton(Peer peer) {
+    return Tooltip(
+      message: translate('Wake on LAN'),
+      child: Material(
+        color: Colors.transparent,
+        child: InkWell(
+          customBorder: const CircleBorder(),
+          onTap: () => wakePeerOnLan(peer.id, gFFI.dialogManager),
+          onLongPress: () => showWolTargetDialog(
+              id: peer.id, dialogManager: gFFI.dialogManager),
+          child: Container(
+            width: 32,
+            height: 32,
+            margin: const EdgeInsets.symmetric(horizontal: 6),
+            decoration: BoxDecoration(
+              shape: BoxShape.circle,
+              color: MyTheme.accent.withOpacity(0.12),
+            ),
+            child: Icon(Icons.power_settings_new_rounded,
+                size: 20, color: MyTheme.accent),
+          ),
+        ),
+      ),
     );
   }
 
