@@ -409,8 +409,49 @@ class _PeerCardState extends State<_PeerCard>
             child: CustomPaint(
               painter: TagPainter(radius: 4, colors: colors),
             ),
-          )
+          ),
+        // UU-style one-tap power button: a machine that is off cannot be
+        // connected, so waking it up is the primary action on an offline card.
+        // Align only hit-tests the button itself, taps elsewhere still reach
+        // the card below.
+        if (!peer.online) _wakeButton(peer),
       ]),
+    );
+  }
+
+  /// Big round power button in the middle of an offline card.
+  /// Tap to wake, long press to edit the MAC used for waking.
+  Widget _wakeButton(Peer peer) {
+    return Align(
+      alignment: Alignment.center,
+      child: Tooltip(
+        message: translate('Wake on LAN'),
+        child: Material(
+          color: Colors.transparent,
+          child: InkWell(
+            borderRadius: BorderRadius.circular(32),
+            onTap: () => wakePeerOnLan(peer.id, gFFI.dialogManager),
+            onLongPress: () =>
+                showWolTargetDialog(id: peer.id, dialogManager: gFFI.dialogManager),
+            child: Container(
+              width: 56,
+              height: 56,
+              decoration: BoxDecoration(
+                shape: BoxShape.circle,
+                color: Colors.white.withOpacity(0.92),
+                boxShadow: const [
+                  BoxShadow(
+                      color: Colors.black26,
+                      blurRadius: 8,
+                      offset: Offset(0, 2)),
+                ],
+              ),
+              child: Icon(Icons.power_settings_new_rounded,
+                  size: 30, color: MyTheme.accent),
+            ),
+          ),
+        ),
+      ),
     );
   }
 
