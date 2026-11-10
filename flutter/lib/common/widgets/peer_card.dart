@@ -236,10 +236,12 @@ class _PeerCardState extends State<_PeerCard>
                     ],
                   ).marginOnly(top: 2),
                 ),
-                // Offline peer in tile / list / portrait layout: same one-tap
-                // wake action as on the grid card, just compact so it fits the
-                // row next to the "more" button.
-                if (!peer.online) _wakeIconButton(peer),
+                // Same one-tap wake action for tile / list / portrait rows.
+                // Shown in both states: on an online peer it still makes sense
+                // as "wake something on that network" is not the only path,
+                // but keeping one fixed spot avoids the button appearing and
+                // disappearing as the online flag flaps.
+                _wakeIconButton(peer),
                 isPortrait
                     ? checkBoxOrActionMorePortrait(peer)
                     : checkBoxOrActionMoreLandscape(peer, isTile: true),
@@ -380,6 +382,9 @@ class _PeerCardState extends State<_PeerCard>
                           style: Theme.of(context).textTheme.titleSmall,
                         )),
                       ]).paddingSymmetric(vertical: 8)),
+                      // Always visible: the wake entry must not depend on the
+                      // online flag, users asked for it on every card.
+                      _wakeIconButton(peer),
                       checkBoxOrActionMoreLandscape(peer, isTile: false),
                     ],
                   ).paddingSymmetric(horizontal: 12.0),
