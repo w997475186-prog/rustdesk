@@ -3970,18 +3970,52 @@ impl Connection {
                     }
                     Some(misc::Union::ShutdownRemoteDevice(_)) => {
                         #[cfg(not(any(target_os = "android", target_os = "ios")))]
-                        if self.restart {
-                            // force_shutdown, same reasoning as force_reboot above:
-                            // the plain variant lets apps block the shutdown.
-                            #[cfg(any(target_os = "linux", target_os = "windows"))]
-                            match system_shutdown::force_shutdown() {
-                                Ok(_) => log::info!("Shutdown by the peer"),
-                                Err(e) => log::error!("Failed to shut down: {}", e),
-                            }
-                            #[cfg(target_os = "macos")]
-                            match system_shutdown::shutdown() {
-                                Ok(_) => log::info!("Shutdown by the peer"),
-                                Err(e) => log::error!("Failed to shut down: {}", e),
+                        {
+                            if self.restart {
+                                log::info!("Shutdown requested by the peer");
+                                // Windows: system_shutdown issues
+                                // ExitWindowsEx(SHUTDOWN|FORCE), which gets silently
+                                // ignored on plenty of machines (fast startup on,
+                                // pending updates, an app holding a shutdown block).
+                                // shutdown.exe is what Explorer's own menu calls and
+                                // works from an interactive process as well as from
+                                // the service, so try it first and keep the API call
+                                // as a fallback.
+                                #[cfg(target_os = "windows")]
+                                {
+                                    match std::process::Command::new("shutdown")
+                                        .args(["/s", "/f", "/t", "0"])
+                                        .spawn()
+                                    {
+                                        Ok(_) => log::info!("Shutdown by the peer"),
+                                        Err(e) => {
+                                            log::error!(
+                                                "shutdown.exe failed ({}), falling back to API",
+                                                e
+                                            );
+                                            match system_shutdown::force_shutdown() {
+                                                Ok(_) => log::info!("Shutdown by the peer"),
+                                                Err(e) => {
+                                                    log::error!("Failed to shut down: {}", e)
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                                #[cfg(target_os = "linux")]
+                                match system_shutdown::force_shutdown() {
+                                    Ok(_) => log::info!("Shutdown by the peer"),
+                                    Err(e) => log::error!("Failed to shut down: {}", e),
+                                }
+                                #[cfg(target_os = "macos")]
+                                match system_shutdown::shutdown() {
+                                    Ok(_) => log::info!("Shutdown by the peer"),
+                                    Err(e) => log::error!("Failed to shut down: {}", e),
+                                }
+                            } else {
+                                log::warn!(
+                                    "Peer asked to shut down but remote restart is disabled"
+                                );
                             }
                         }
                     }
